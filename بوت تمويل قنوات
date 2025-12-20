@@ -1,0 +1,170 @@
+import os
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
+    MessageHandler, ContextTypes, filters
+)
+
+TOKEN = os.getenv)(8173525918:AAGqQk81wqLpz2bs0P4E_oq4pfRIPxA9Ve4)
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+CHANNEL_USERNAME = "@noooralhoda50"
+CHANNEL_LINK = "https://t.me/noooralhoda50"
+
+funding_open = True
+pending = {}
+
+# ===== فحص الاشتراك =====
+async def is_subscribed(bot, user_id):
+    try:
+        member = await bot.get_chat_member(https://t.me/noooralhoda50, user_id)
+        return member.status in ("member", "administrator", "creator")
+    except:
+        return False
+
+async def force_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("📣 اشترك في القناة", url=CHANNEL_LINK)],
+        [InlineKeyboardButton("✅ تحقق من الاشتراك", callback_data="check_sub")]
+    ]
+    await update.message.reply_text(
+        "🚫 لا يمكنك استخدام البوت قبل الاشتراك في القناة",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# ===== /start =====
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if not await is_subscribed(context.bot, user_id):
+        await force_subscribe(update, context)
+        return
+
+    keyboard = [
+        [InlineKeyboardButton("💰 تمويل", callback_data="fund")],
+        [InlineKeyboardButton("📞 تواصل", callback_data="contact")],
+        [InlineKeyboardButton("ℹ️ معلومات", callback_data="info")]
+    ]
+    await update.message.reply_text(
+        "👋 أهلاً بك في بوت التمويل",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# ===== تحقق الاشتراك =====
+async def check_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    if await is_subscribed(context.bot, q.from_user.id):
+        await q.message.delete()
+        await start(Update(update.update_id, message=q.message), context)
+    else:
+        await q.message.reply_text("❌ لم يتم الاشتراك بعد")
+
+# ===== الأزرار =====
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global funding_open
+    q = update.callback_query
+    await q.answer()
+
+    if q.data == "fund":
+        if not funding_open:
+            await q.message.reply_text("⛔ التمويل مقفول حاليًا")
+            return
+        await q.message.reply_text("💵 اكتب مبلغ التمويل:")
+        context.user_data["step"] = "amount"
+
+    elif q.data == "contact":
+        await q.message.reply_text("📞 الأدمن: @USERNAME")
+
+    elif q.data == "info":
+        await q.message.reply_text("ℹ️ بوت مخصص لاستقبال التمويلات")
+
+# ===== نصوص المستخدم =====
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("step") == "amount":
+        amount = update.message.text
+        context.user_data["amount"] = amount
+        context.user_data["step"] = "photo"
+        await update.message.reply_text(
+            "💳 طرق الدفع:\n"
+            "📱 فودافون كاش: 010XXXXXXX\n"
+            "🏦 إنستاباي: instapay@name\n\n"
+            "📸 ابعت سكرين التحويل"
+        )
+
+# ===== صور المستخدم =====
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    amount = context.user_data.get("amount", "غير محدد")
+    pending[user.id] = {"user": user.username, "amount": amount}
+
+    keyboard = [
+        [InlineKeyboardButton("✅ قبول", callback_data=f"ok_{user.id}"),
+         InlineKeyboardButton("❌ رفض", callback_data=f"no_{user.id}")]
+    ]
+
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"📥 تمويل جديد\n👤 @{user.username}\n💵 {amount}",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+    await context.bot.forward_message(
+        chat_id=ADMIN_ID,
+        from_chat_id=update.message.chat_id,
+        message_id=update.message.message_id
+    )
+
+    await update.message.reply_text("✅ تم إرسال الطلب للأدمن")
+
+# ===== أوامر الأدمن =====
+async def admin_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    action, user_id = q.data.split("_")
+    user_id = int(user_id)
+
+    data = pending.get(user_id)
+    if not data:
+        return
+
+    if action == "ok":
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="✅ تم قبول التمويل، شكرًا لدعمك ❤️"
+        )
+        with open("funding_log.txt", "a", encoding="utf-8") as f:
+            f.write(f"{data['user']} | {data['amount']} | مقبول\n")
+    else:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="❌ تم رفض التمويل"
+        )
+
+    pending.pop(user_id)
+
+async def close_funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global funding_open
+    if update.message.from_user.id == ADMIN_ID:
+        funding_open = False
+        await update.message.reply_text("🔒 تم قفل التمويل")
+
+async def open_funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global funding_open
+    if update.message.from_user.id == ADMIN_ID:
+        funding_open = True
+        await update.message.reply_text("🔓 تم فتح التمويل")
+
+# ===== MAIN =====
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("close", close_funding))
+    app.add_handler(CommandHandler("open", open_funding))
+    app.add_handler(CallbackQueryHandler(admin_actions, pattern="^(ok|no)_"))
+    app.add_handler(CallbackQueryHandler(check_sub, pattern="check_sub"))
+    app.add_handler(CallbackQueryHandler(buttons))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
